@@ -17,48 +17,51 @@ public class myStack{
     }
 
 
+    //checks if stack is empty, returns boolean
+    public boolean isEmpty(){
 
-public boolean isEmpty(){
+        if (stack.size() == 0){
+            return true;
+        }
+        return false;
+    }
 
-  if (stack.size() == 0){
-    return true;
-  }
-  return false;
+    
+    //returns number of elements in the stack
+    public int size(){
 
-}
+        return stack.size();
 
+    }
 
-public int size(){
-
-  return stack.size();
-
-}
-
-public void push(Object element){
-  int temp = stack.size() - 1;
-    stack.add(0, element);
-}
-
-
-public Object pop(){
-
-  if (stack.size() == 0){
-  throw new NoSuchElementException();
-  }
-
-  Object obj = stack.get(0);
-  stack.remove(0);
-  return obj;
-}
+    
+    //accepts an element and adds element to the stack
+    public void push(Object element){
+        int temp = stack.size() - 1;
+        stack.add(0, element);
+    }
 
 
-public Object peek(){
+    //removes an element from the stack and returns removed object. throws exception if empty
+    public Object pop(){
 
-  if (stack.size() == 0){
-  throw new NoSuchElementException();
-  }
+        if (stack.size() == 0){
+            throw new NoSuchElementException();
+        }
 
-  return stack.get(0);
-}
+        Object obj = stack.get(0);
+        stack.remove(0);
+        return obj;
+    }
+
+    //returns top element from the stack, if empty throws exception
+    public Object peek(){
+
+        if (stack.size() == 0){
+            throw new NoSuchElementException();
+        }
+
+        return stack.get(0);
+    }
 
 }
