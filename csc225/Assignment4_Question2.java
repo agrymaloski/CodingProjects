@@ -3,7 +3,9 @@ import java.io.FileReader;
 import java.io.*;
 import java.util.Scanner;
 
-
+//this file accepts a string from a file (given to in the command line)
+//the string is a list of numbers separated by a comma, the numbers are in order with one number missing
+//the program will print the missing number
 
 class Find{
 
@@ -25,7 +27,7 @@ class Find{
     int result = 0;
 
 
-
+    //split up string into separate integers
     String character = input.readLine();
     String[] values = character.split(",");
 
