@@ -1,7 +1,9 @@
 import java.util.ArrayList;
 
+//this class tests myQueue.java and myStack.java. It accepts data from the command line
 public class test{
 
+  
   public static void main(String args[]){
 
     ArrayList<Object> stack = new ArrayList<Object>();
@@ -11,37 +13,26 @@ public class test{
     myStack s1 = new myStack(stack);
     myQueue q1 = new myQueue(queue);
 
-    //read arguments from user
+    
+    //read arguments from command line and put in queue and stack
     for(int i= 0; i< args.length; i++){
            s1.push(args[i]);
            q1.enqueue(args[i]);
         }
 
-    //print stack
+    //print the stack
     while(!s1.isEmpty()){
       System.out.print(s1.pop().toString() + " " );
     }
     System.out.println("\nThe Stack is empty");
 
 
-    //print stack
+    //print the queue
     while(!q1.isEmpty()){
       System.out.print(q1.dequeue().toString() + " ");
     }
     System.out.println("\nThe Queue is empty");
 
-
-
-
-/*
-    s1.push("a");
-    s1.push("b");
-    s1.push("c");
-    System.out.println(stack);
-    s1.pop();
-    s1.pop();
-    System.out.println(stack);
-*/
 
 
   }
