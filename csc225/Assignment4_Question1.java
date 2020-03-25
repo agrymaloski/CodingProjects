@@ -2,6 +2,9 @@
 
 //script will take input from the command line specifying the name of a .txt file
 //which will contain arrays to be sorted
+//arrays will be given in this form 1,3,5,6;8,9,20
+//two seperate arrays given separated by a semi-colon, each number separated by a comma
+//output will be a sorted array (sorted by a merge sort algorithm o(n).
 import java.io.File;
 import java.io.FileReader;
 import java.io.*;
@@ -85,7 +88,7 @@ import java.util.Scanner;
       }
 
 
-   ////////////SORTING ALGORITM BEGINS!!!!!!!!!!!!!!!!!!!//////////////////////////////////
+   //merge sort algorithm o(n) begins. 
       i = 0;
       k = 0;
       int c = 0;
