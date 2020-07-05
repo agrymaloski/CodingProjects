@@ -1,0 +1,8 @@
+//
+// This is a basic hello world program
+//
+
+export const hello = () => {
+  var hello = 'Hello, World!'
+  return hello
+};
