@@ -2,6 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import './index.css';
 
+//this was coded with a react tutorial that can be found here https://reactjs.org/tutorial/tutorial.html
+
+
 //why function component and not class? dont have to extend react.component
 //easier to write, dont have their own state.
 function Square(props){
