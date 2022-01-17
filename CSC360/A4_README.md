@@ -1,0 +1,1 @@
+My program properly schedules tasks, calculates wait time and turn around time. When no task is available to schedule my program prints out "IDEL" accordingly. Tasks are scheduled based on the rules in the assignment description
