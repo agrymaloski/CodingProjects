@@ -1,0 +1,386 @@
+/*
+ * UVic CSC 360, Summer 2021
+ * This code copyright 2021: Roshan Lasrado, Mike Zastre
+ *
+ * Assignment 2: Task 1
+ * --------------------
+ * Simulate a Vaccination Center with `1` Registration Desk and `N` 
+ * Vaccination Stations.
+ * 
+ * Input: Command Line args
+ * ------------------------
+ * ./vaccine <num_vaccination_stations `N`> <input_test_case_file>
+ * e.g.
+ *      ./vaccine 10 test1.txt
+ * 
+ * Input: Test Case file
+ * ---------------------
+ * Each line corresponds to person arrive for vaccinationn 
+ * and is formatted as:
+ *
+ * <person_id>:<arrival_time>,<service_time>
+ * 
+ * NOTE: All times represented in `Tenths of a Second`.
+ * 
+ * Expected Sample Output:
+ * -----------------------
+ * Person 1: Arrived at 3.
+ * Person 1: Added to the queue.
+ * Vaccine Station 1: START Person 1 Vaccination.
+ * Vaccine Station 1: FINISH Person 1 Vaccination.
+ * 
+ */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <string.h>
+#include <stdbool.h>
+
+
+/*
+ * A queue structure provided to you by the teaching team. This header
+ * file contains the function prototypes; the queue routines are
+ * linked in from a separate .o file (which is done for you via
+ * the `makefile`).
+ */
+#include "queue.h"
+
+
+/* 
+ * Some compile-time constants related to assignment description.
+ */
+#define MAX_VAC_STATIONS 10
+#define MAX_INPUT_LINE 100
+#define TENTHS_TO_SEC 100000
+
+
+/*
+ * Here are variables that are available to all threads in the
+ * process. Given these are global, you need not pass them as
+ * parameters to functions. However, you must properly initialize
+ * the queue, the mutex, and the condition variable.
+ */
+Queue_t *queue;
+pthread_mutex_t queue_mutex;
+pthread_cond_t queue_condvar;
+unsigned int num_vac_stations;
+unsigned int is_vac_completed = false;
+
+//this count keeps track of completed vaccines
+int finished_vac = 0;
+
+//this count records number of people needed to vaccinate
+int num_people = -1;
+/*
+ * Function: reg_desk
+ * ------------------
+ *  Registration Desk Thread.
+ *  Reads the input file and adds the vaccination persons to the
+ *  queue as per their arrival times.
+ * 
+ *  arg: Input file name
+ *  
+ *  returns: null
+ */
+void *reg_desk(void *arg) {
+
+    char *filename = (char *)arg;
+
+    FILE *fp = fopen(filename, "r");
+    
+    if (fp == NULL) {
+        fprintf(stderr, "File \"%s\" does not exist.\n", filename);
+        exit(1);
+    }
+
+    char line[MAX_INPUT_LINE];
+    unsigned int current_time = 0;
+   
+    while (fgets(line, sizeof(line), fp)) {
+        int person_id;
+        int person_arrival_time;
+        int person_service_time;
+
+        int vars_read = sscanf(line, "%d:%d,%d", &person_id, 
+            &person_arrival_time, &person_service_time);
+
+        if (vars_read == EOF || vars_read != 3) {
+            fprintf(stderr, "Error reading from the file.\n");
+            exit(1);
+        }
+
+        if (person_id < 0 || person_arrival_time < 0 || 
+            person_service_time < 0)
+        {
+            fprintf(stderr, "Incorrect file input.\n");
+            exit(1);
+        }
+
+        int arrival_time = person_arrival_time;
+
+        // Sleep to simulate the persons arrival time.
+        usleep((arrival_time - current_time) * TENTHS_TO_SEC);
+        fprintf(stdout, "Person %d: arrived at time %d.\n", 
+            person_id, arrival_time);
+
+        // Update the current time based on simulated time elapsed.
+        current_time = arrival_time;
+
+        // TODO ... Insert your Code Here
+        // For what to implement, please refer to the function
+        // description above. Beware that you are now working in a 
+        // multi-threaded scenario.
+        
+
+	//add people to queue based on arrival times
+
+	//lock mutex
+	pthread_mutex_lock(&queue_mutex);	
+	
+	//create/init new person!
+	PersonInfo_t* person = new_person();
+	person->service_time = person_service_time;
+	person->arrival_time = person_arrival_time;
+	person->id = person_id;
+	
+        
+	//add person to queue and notify threads
+	num_people++;
+	enqueue(queue, person); 	
+	printf("Person %d: Added to the queue\n", person_id);
+	pthread_cond_signal(&queue_condvar);
+
+	//unlock mutex
+	pthread_mutex_unlock(&queue_mutex);
+
+    }
+
+    //count starts at -1 so add one to count
+    num_people++;
+
+    fclose(fp);
+
+    // TODO ... Insert your Code Here
+    // Notify all waiting threads that the vaccination drive is now 
+    // completed.
+    
+
+
+
+    return NULL;
+}
+
+
+/*
+ * Function: vac_station
+ * ---------------------
+ *  Vaccination Station Thread.
+ *  Vaccinate the persons from the queue as per their service times.
+ *
+ *  arg: Vaccination station number
+ *
+ *  returns: null
+ *
+ * Remember: When performing a vaccination, the vac_station 
+ * must sleep for the period of time required to "service"
+ * that "person". (This is part of the simulation). Assuming
+ * the "person" to be serviced is a pointer to an instance of
+ * PersonInfo, the sleep would be something like:
+ *
+ *      usleep(person->service_time * TENTHS_TO_SEC);
+ *
+ */
+void *vac_station(void *arg) {
+    int station_num = *((int *)arg) + 1; 
+    
+    deallocate(arg);
+
+    while (true) {
+        // TODO ... Insert your Code Here
+        // For what to implement, please refer to the function
+        // description above and the assignment description.
+	
+	//if vaccine is completed and no ppl are waiting to be vaccinated (empty queue) return!
+	if((is_vac_completed == true && is_empty(queue)) && (finished_vac ==  num_people)){ 
+           
+           //release mutex and condition variable
+           pthread_mutex_unlock(&queue_mutex);
+           pthread_cond_signal(&queue_condvar);
+           return NULL;
+        }
+
+
+	//protect critical section (accessing queue)
+	pthread_mutex_lock(&queue_mutex);
+	
+	//loop while empty (no ppl are waiting)
+	while(is_empty(queue)){
+
+		//if # of completed vaccines equals total people return (all vaccines have been done)
+		if(finished_vac ==  num_people){
+		   	 
+		   //release mutex and condition variable before returning	
+		   pthread_mutex_unlock(&queue_mutex);
+                   pthread_cond_signal(&queue_condvar); 
+	           
+		   return NULL;
+		}
+                //wait if people still need to be vaccinated
+		pthread_cond_wait(&queue_condvar, &queue_mutex); 
+	}
+
+	//dequeue next person to be vaccinated
+	PersonInfo_t* person = dequeue(queue);	
+	
+	//person now will be vaccinated -> update variable
+	is_vac_completed = true;
+	finished_vac++;
+	//printf("Vaccine Station %d: START Person %d Vaccination. \n", station_num , person->id);
+        
+	//finished critical section, unlock and notify
+	pthread_mutex_unlock(&queue_mutex);
+        pthread_cond_signal(&queue_condvar);
+        
+	printf("Vaccine Station %d: START Person %d Vaccination. \n", station_num , person->id);
+	
+	//perform vaccine
+	usleep(person->service_time * TENTHS_TO_SEC);
+	printf("Vaccine Station %d: FINISH Person %d Vaccination. \n", station_num , person->id);
+    }
+    return NULL;
+}
+
+
+/*
+ * Function: validate_args
+ * -----------------------
+ *  Validate the input command line args.
+ *
+ *  argc: Number of command line arguments provided
+ *  argv: Command line arguments
+ */
+void validate_args(int argc, char *argv[]) {
+    if (argc != 3) {
+        fprintf(stderr, "Invalid number of input args provided! "
+                        "Expected 2, received %d\n", 
+                        argc - 1);
+        exit(1);
+    }
+
+    num_vac_stations = atoi(argv[1]);
+    if ((num_vac_stations <= 0) || (num_vac_stations > MAX_VAC_STATIONS)) {
+        fprintf(stderr, "Vaccine stations exceeded the MAX LIMIT.%d\n", 
+            argc - 1);
+        exit(1);
+    }
+
+}
+
+/*
+ * Function: initialize_vars
+ * -------------------------
+ *  Initialize the mutex, conditional variable and the queue.
+ */
+void initialize_vars() {
+    // TODO ... Insert your Code Here
+    // For what to implement, please refer to the function
+    // description above.
+    
+    //init queue
+    queue = init_queue();
+
+    //init condition var 
+    pthread_cond_init( &queue_condvar, NULL);
+    
+    //init mutex
+    pthread_mutex_init( &queue_mutex, NULL);
+}
+
+
+/*
+ * Function: main
+ * -------------------------
+ * argv[0]: Number of Vaccination Stations 
+ * argv[1]: Input file/test case.
+ */
+int main(int argc, char *argv[]) {
+    int i, status;
+
+    validate_args(argc, argv);
+
+
+    initialize_vars();
+       
+    // TODO ... Insert your Code Here
+    
+    
+    // 1. Create threads.
+
+    
+    pthread_t reg_desk_thread;
+    pthread_t *stations;
+    stations = (pthread_t *) malloc(num_vac_stations*sizeof(pthread_t));
+    
+    int result = 0;
+
+
+    //create thread for registration desk
+    result = pthread_create(&reg_desk_thread, 0, reg_desk,(void*) argv[2]);
+
+    //check result
+    if (result != 0){
+           printf("ERROR: Cannot create thread\n");
+           exit(0);
+    }
+
+    //loop through the vaccine stations creating thread for each one
+    for(int i = 0; i <num_vac_stations; i++){
+        
+
+        //replace with emalloc 	    
+	int *arg;
+       	arg = (int*)malloc(sizeof(int));
+	if ( arg == NULL ) {
+            fprintf(stderr, "ERROR: problem allocating memory\n");
+            exit(EXIT_FAILURE);
+        }
+        *arg = i;	
+
+	//create a vaccine station thread
+	result = pthread_create(&stations[i], 0, vac_station,arg);
+   	
+	//check result
+	if (result != 0){
+	   printf("ERROR: Cannot create thread\n");
+	   exit(0);
+	}
+    }
+
+    // 2. Wait for threads to complete.
+    
+    pthread_join( reg_desk_thread, NULL);
+    //loop through stations to call pthread_join on each thread
+    for(int i = 0; i <num_vac_stations; i++){
+    
+        result =pthread_join(stations[i],NULL);
+	
+	//check result
+	if(result != 0 ){
+	  printf("ERROR: Cannot create thread\n");
+          exit(0);	  
+	}
+    }
+
+    
+    // 3. Clean up.
+    
+    free(stations);
+    pthread_mutex_destroy( &queue_mutex);
+    pthread_cond_destroy( &queue_condvar);
+
+    exit(0);  
+    
+}
