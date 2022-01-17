@@ -1,0 +1,340 @@
+#include <stdio.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+
+
+//function will take in a ptr to array and initialize that array
+int initArray(char *array){
+	int size = strlen(array);
+	if(size == 0){
+   		 return 0;
+  	}
+  	
+	int i = 0;
+  	while(i<size){
+    		array[i] = '\0';
+    		i++;
+  	}
+
+  	return 1;
+}
+
+//sets all pointers in this array to null (initializes it)
+void initPtrArray(char **array, int size){
+        
+        int i = 0;
+        while(i<size){
+                *array = NULL;
+                array++;
+                i++;
+        }
+}
+
+
+
+//function reads paths given by .vshrc, checks each path for a binary command file (command given as "/{parameter}"), if found return path if no file found return null
+char* getPath(char* command, char* path){
+
+	FILE *dirFile = fopen(".vshrc","r");
+	
+	//check for open failure
+	if (dirFile == NULL) {
+    		printf("Error: .vshrc failed to open \n");
+    		return NULL;
+	}
+
+	char temp[30];
+	temp[0] = '/';
+	temp[1] = '\0';	
+	strcat(temp, command);	
+	//read through .vshrc one line at a time, add command to end, check for binary file
+	while (fgets(path, 100, dirFile) != NULL){
+        	
+		//get rid of new line (for concatenation)
+		size_t ln = strlen(path) - 1;
+		if (path[ln] == '\n'){
+    			path[ln] = '\0';
+		}
+		
+		//concatenate path with command (/{command})
+		strcat(path, temp);
+		
+		//check if binary file is accessable if yes return with path (else read next dir)	
+		if(access(path,F_OK ) == 0){
+			fclose(dirFile);
+			return path;
+		}
+	}
+	fclose(dirFile);
+
+	printf("Error: Path to the %s command was not found \n", command);
+	return NULL;
+}
+
+
+//function calculates wallclock time. Gets time at start of command returns time difference from end of command
+long getWallclockTime(struct timeval startTime){
+	
+	struct timeval endTime;
+	//get current time
+	gettimeofday(&endTime, NULL);
+
+	//return wallclock time
+	return (endTime.tv_sec - startTime.tv_sec) * 1000000 +
+            (endTime.tv_usec - startTime.tv_usec);
+}
+
+//function accepts the path to the binary command file, array of arguments, input and output file. Creates a new process and executes the command via execve
+void executeCommand(char* pathName,  char** arguments, char* inputFile, char* outputFile){
+	
+	int fd[2];
+	int status;
+	char *args[10];
+	char *envp[] = { 0 };
+
+	//put arguments into args
+	args[0] = pathName;
+	int i = 1;
+
+	//loop through argument array and put in args (used in exceve)
+	while (*arguments != NULL){
+		args[i] = *arguments;
+		arguments++;
+		i++;
+	}
+	args[i] = 0;
+	
+	int pid = fork();
+	
+	//fork failed
+	if(pid < 0){
+		printf("Error: Fork failed");
+	
+	//child pid, excecute process	
+	}else if(pid == 0){
+		
+		//output file was given
+		if(outputFile != NULL){
+			
+			fd[0] = open(outputFile, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
+			
+			//error: send error message
+			if (fd[0] == -1) {
+            			printf("Error: Cannot open %s for writing\n", outputFile);
+            			return;
+       			}
+
+			//redirect output
+			dup2(fd[0], 1);
+			dup2(fd[1], 2);
+		}
+
+		//input file was given
+		if(inputFile != NULL){
+			fd[1] = open(inputFile,  O_CREAT, S_IRUSR|S_IWUSR);
+			
+			//error: send error message
+			if (fd[1] == -1) {
+                                printf("Error: Cannot open %s for reading\n", inputFile);
+                                return;
+                        }
+			//redirect input
+                        dup2(fd[1], 0);
+                        dup2(fd[1], 2);
+
+		}
+		//close and restore!
+		close(fd[0]);
+		close(fd[1]);
+		fflush(stdin);
+		execve(pathName, args,envp);
+		 
+	//parent: wait for child to complete process
+	}else{
+		waitpid(pid, &status, 0);
+		
+	}
+	return;
+}
+
+
+//recieves a fileName and seperates the :: so that it is no longer included in the file name
+char* getFileName(char* fileName, char* newFileName){
+	
+	int len = strlen(fileName);
+	int j = 0;
+
+	//loop through filename, and add to new filename (without ':')
+	for( int i=0; i<len;i++){
+		if(fileName[i] != ':'){
+			newFileName[j] = fileName[i];
+			j++;
+		}
+	}
+	//j==0 means fileName was empty (just :: recieved), print error
+	if(j == 0){
+		printf("Error: No file Inputted!\n");
+		return NULL;
+	}
+	newFileName[j] = '\0';
+	
+	if(access(newFileName,F_OK ) != 0){
+                printf("Error: File '%s' does not exist!\n", newFileName);
+		return NULL;
+        }
+	
+	return newFileName;
+}
+
+
+
+int main(int argc, char **argv){
+	
+	//prompt the user for commands
+	printf("vsh%% ");
+
+	//various arrays used in this program (input => user input, path => holds path to binary command file, fileName => holds inputted file name)	
+	char input[80];
+	char path[80];
+
+	initArray(input);
+	fgets(input, 80, stdin);
+	
+	//get rid of new line
+	size_t ln = strlen(input) - 1;
+        if (input[ln] == '\n'){
+        	input[ln] = '\0';
+        }
+
+	//loop until user inputs exit (terminates program)
+	while (strcmp(input, "exit") != 0) {
+			
+			//at the beginning of each command calculate start time
+			struct timeval startTime;
+    			struct timezone tz;
+			gettimeofday(&startTime, &tz);
+			
+      			char tok[100];
+			char path[80];
+      			strncpy(tok , input, 100);
+      			char *word = strtok(tok, " ");
+			char inputFile[20];
+			char outputFile[20];
+			char* arguments[10];
+
+			//flags/iterators
+			int argumentCount = 0;
+			char command[20];
+			int commandRead = 0;
+			int error = 0;
+			int timeCommand = 0;
+			
+			//init arrays
+			initArray(inputFile);
+			initArray(outputFile);
+      			initPtrArray(arguments, 10);
+			initArray(path);
+			initArray(command);
+			//collect arguments
+      			while (word != NULL){
+
+				//must time opperation => set flag
+            			if(strstr(word, "##")) {
+					timeCommand = 1;
+				
+				//file inputted => determine input or output	
+				}else if(strstr(word, "::")){
+					if(word[0] == ':'){
+						if(getFileName(word, outputFile) == NULL){
+							error = 1;
+						}
+					}else{
+						if(getFileName(word, inputFile) == NULL){
+							error = 1;
+						}
+					}
+
+				//arguments	
+				}else{
+					if(commandRead == 0){
+						strncpy(command, word, 20);
+						commandRead = 1;
+					}else{
+						arguments[argumentCount]= word;	
+						argumentCount++;
+					}
+				}
+
+            			word = strtok(NULL, " ");
+      			}
+			
+			//if no command was inputted print error message
+			 if(command[0] == '\0'){
+                                printf("Error: no command inputted\n");
+                                error = 1;
+                        }
+
+			//get path to binary file (if none then set error flag!)
+			if(error == 0 && getPath(command, path) == NULL){
+				error = 1;
+			}	
+
+			//if no errors
+			if(error ==0){
+				
+				//two files read
+				if(inputFile[0] != '\0' && outputFile[0] != '\0'){
+					executeCommand(path, arguments, inputFile, outputFile);
+					if(timeCommand == 1) {
+						timeCommand = -3;
+					}
+				//output file read
+				}else if (outputFile[0] != '\0'){
+					executeCommand(path, arguments, NULL, outputFile);
+					
+					if(timeCommand == 1) {
+                                                timeCommand = -3;
+                                        }
+
+				//input file read
+				}else if (inputFile[0] != '\0'){
+                                        executeCommand(path, arguments, inputFile, NULL);
+                                
+				}
+				//no file given
+				else{
+					executeCommand(path, arguments, NULL, NULL);
+				
+				}
+				
+				//print time if '##' recieved (no output file)
+				if(timeCommand == 1){
+					printf("Time: %lu microseconds\n ", getWallclockTime(startTime));
+				
+				//write command to output file				
+				}else if(timeCommand == -3){
+					FILE *f = fopen(outputFile, "a");
+					fprintf(f, "Time: %lu microseconds\n ", getWallclockTime(startTime));
+					fclose(f);
+				}
+				
+			}
+				
+			printf("vsh%% ");
+			initArray(input);
+        		fgets(input, 80, stdin);
+			//get rid of new line
+			size_t ln = strlen(input) - 1;
+                        if (input[ln] == '\n'){
+                        	input[ln] = '\0';
+                       	}
+		}
+	
+	return 0;
+}
