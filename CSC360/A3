@@ -1,0 +1,99 @@
+/*Required Headers*/
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <semaphore.h>
+#include <stdbool.h>
+#include "meetup.h"
+#include "resource.h"
+/*
+ * Declarations for barrier shared variables -- plus concurrency-control
+ * variables -- must START here.
+ */
+//semiphore (used as mutex to protect critical sections)
+sem_t sem_mutex;
+//semiphore (used to count number of waiting threads)
+sem_t sem_count;
+//semiphore (used to block threads until n threads arrive)
+sem_t sem_barrier;
+//flag for meetfirst meetlast variable given in init meetup
+int first_or_last = 0;
+//stores n thread value given in init meetup funtion
+int thread_count = 0;
+//resource stores password
+resource_t r1;
+void initialize_meetup(int n, int mf) {
+    
+    char label[100];
+    thread_count = n;
+    int i;
+    if (n < 1) {
+        fprintf(stderr, "Who are you kidding?\n");
+        fprintf(stderr, "A meetup size of %d??\n", n);
+        exit(1);
+    }
+    /*
+     * Initialize the shared structures, including those used for
+     * synchronization.
+     *
+     */
+    first_or_last = mf;
+    //count will have orriginal value of n-1 (once all threads arrive sem value should be 0)
+    sem_init(&sem_count, 0, n-1);
+    //used to block threads val is 0
+    sem_init(&sem_barrier, 0, 0);
+    //sem value is 1 (used as mutex)
+    sem_init(&sem_mutex,0,1);
+    
+    //stores password
+    init_resource(&r1, "password");
+}
+void join_meetup(char *value, int len) {
+    
+  //variable to store getvalue semiphore value	
+  int num_threads;
+  
+  //only allow one thread at a time
+  sem_wait(&sem_mutex);
+  
+  //get value of waiting threads
+  sem_getvalue(&sem_count, &num_threads);
+  
+  //if thread # > 0 not enough bobofets have arrived
+  if(num_threads > 0){
+	
+	//if first thread and meet first is on save password!  
+	if(num_threads == thread_count-1 && MEET_FIRST == first_or_last){		
+		write_resource(&r1, value, len); 
+	}
+        
+	//allow next thread to proceed
+	sem_post(&sem_mutex);
+	//wait!! Only released when n bobofets have arrived
+	sem_wait(&sem_count);
+	sem_wait(&sem_barrier);
+	
+  //if thread # ==0 n threads have arrived! 		
+  }else{
+        //if meet last flag on then save password of nth thread 
+	if(MEET_LAST == first_or_last){ 
+		
+		write_resource(&r1, value, len);
+        }       
+  }
+  
+  //read password value
+  read_resource(&r1, value, len); 
+  
+  sem_getvalue(&sem_count, &num_threads);
+  
+  //if # threads == thread # - 1 all threads were released (let next bobofet gathering begin)
+  if(num_threads == thread_count -1){
+     sem_post(&sem_mutex);
+  //not all n threads were released, release next thread   
+  }else{
+     sem_post(&sem_count);
+     sem_post(&sem_barrier);
+  }       
+}
