@@ -1,0 +1,527 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/*
+ * Some compile-time constants.
+ */
+
+#define REPLACE_NONE 0
+#define REPLACE_FIFO 1
+#define REPLACE_CLOCK 2
+#define REPLACE_LFU  3
+#define REPLACE_OPTIMAL 4
+
+
+#define TRUE 1
+#define FALSE 0
+#define PROGRESS_BAR_WIDTH 60
+#define MAX_LINE_LEN 100
+
+
+/*
+ * Some function prototypes to keep the compiler happy.
+ */
+int setup(void);
+int teardown(void);
+int output_report(void);
+long resolve_address(long, int);
+void error_resolve_address(long, int);
+
+
+/*
+ * Variables used to keep track of the number of memory-system events
+ * that are simulated.
+ */
+int page_faults = 0;
+int mem_refs    = 0;
+int swap_outs   = 0;
+int swap_ins    = 0;
+int clock_front_hand = -1;
+int clock_back_hand = -1;
+/*
+ * Page-table information. You may want to modify this in order to
+ * implement schemes such as CLOCK. However, you are not required
+ * to do so.
+ */
+
+
+/*
+ * NOTE: 
+ * 	fifo_count => used to keep track of the order pages are added (instead of using a queue)
+ *
+ * 	lfu_count => used to keep track of how many times a page is used 
+ *
+ * 	clock_bit => represents the "bit toggle" in the clock algorithm. Helps to determine which pages have recieved a "second chance"
+ */
+struct page_table_entry *page_table = NULL;
+struct page_table_entry {
+    long page_num;
+    int dirty;
+    int free;
+    long fifo_count;
+    int lfu_count;
+    int clock_bit;
+};
+
+
+
+/*
+ * These global variables will be set in the main() function. The default
+ * values here are non-sensical, but it is safer to zero out a variable
+ * rather than trust to random data that might be stored in it -- this
+ * helps with debugging (i.e., eliminates a possible source of randomness
+ * in misbehaving programs).
+ */
+
+int size_of_frame = 0;  /* power of 2 */
+int size_of_memory = 0; /* number of frames */
+int page_replacement_scheme = REPLACE_NONE;
+
+
+
+
+/*
+* This function loops through the page table and increments the fifo count by one (the first page in will accumulate the highest fifo count)
+ */
+void increase_fifo_count(){
+	for ( int i = 0; i < size_of_memory; i++) {
+		page_table[i].fifo_count++;
+
+	}
+}
+
+/*
+ * This function implements the fifo algorithm. It returns the index of the page with the highest fifo count (ie "first in")
+ */
+int fifo_algorithm(int clock_fifo, int is_clock){
+
+	long oldest_frame_count = 0;
+	long oldest_frame = 0;
+	
+ 	for(int i = 0; i<size_of_memory; i++){
+		
+		//looks for biggest fifo count (frame there the longest)
+		if(page_table[i].fifo_count >= oldest_frame_count){
+			
+			//either not clock algorithm or this page has not been seen by all
+			if(is_clock == FALSE || page_table[i].fifo_count <= page_table[clock_fifo].fifo_count){
+				
+				//this moves the back hand to point to the next oldest frame (only applies to clock algo)
+				clock_back_hand = oldest_frame;
+				oldest_frame = i;
+				oldest_frame_count = page_table[i].fifo_count;
+			}
+		}		
+	}	
+
+	//return the oldest frame
+	return oldest_frame;
+}
+
+/*
+ * This function implements the least frequently used algorithm. It returns the index of the page with the highest lfu count
+ * (ie the "least frequently used page")
+ */
+int lfu_algorithm(){
+      
+	int lfu = page_table[0].lfu_count;
+	int lfu_page = 0;
+    	//used to determine "tie breakers"
+	int fifo_count = page_table[0].fifo_count;
+	
+	for(int i = 0; i<size_of_memory; i++){
+		
+		//if there is a lfu_count lower update lfu
+		if(page_table[i].lfu_count < lfu){
+			lfu = page_table[i].lfu_count;
+			lfu_page = i;
+			fifo_count = page_table[i].fifo_count;
+		
+		//settle tie breaks (if lfu counts are the same, take the page put in table first"
+		}else if(page_table[i].lfu_count == lfu){
+			
+        	        //this page was put in table before, this is the new lfu page
+			if(page_table[i].fifo_count > fifo_count ){
+				lfu = page_table[i].lfu_count;
+                		lfu_page = i;
+                		fifo_count = page_table[i].fifo_count;
+			}	
+		}
+	}
+
+	//return the index to the least frequently used page
+	return lfu_page;
+}
+
+/*
+ * This function implements the clock algorithm. This algorith uses 2 clock hands, front and back. The front hand points according to the fifo
+ * algorithm (calls fifo, if bit not set, set bit, move to next page returned by the fifo algorithm). The back hand points originally to the 
+ * middle page and iterates by one each time the front clock hand moves one. The returned page will be a page chosen by the fifo algorithm 
+ * that has a set bit (already recieved a "second chance"). 
+ */
+int clock_algorithm(){
+	
+	//loop until a page is found to replace
+	for(;;){
+		
+		//check clock hand was set, if no set bit and move hand, else return frame
+		if(page_table[clock_front_hand].clock_bit == 0){
+            
+            		page_table[clock_front_hand].clock_bit = 1;
+            
+            	}else{
+                	//victim frame was already given a second chance
+                	return clock_front_hand;
+            	}
+
+
+		//back hand unsets the bits 
+		page_table[clock_back_hand].clock_bit = 0;
+
+		//move clock front hand (back hand is changed in the fifo function)
+		if(clock_front_hand < size_of_memory-1){
+			clock_front_hand = fifo_algorithm(TRUE, clock_front_hand);
+		}
+	}
+}
+
+/*
+ * Function to convert a logical address into its corresponding 
+ * physical address. The value returned by this function is the
+ * physical address (or -1 if no physical address can exist for
+ * the logical address given the current page-allocation state.
+ */
+
+long resolve_address(long logical, int memwrite)
+{
+    int i;
+    long page, frame;
+    long offset;
+    long mask = 0;
+    long effective;
+
+
+    //increment the fifo count of each page in table
+    increase_fifo_count();
+    
+
+    /* Get the page and offset */
+    page = (logical >> size_of_frame);
+
+    for (i=0; i<size_of_frame; i++) {
+        mask = mask << 1;
+        mask |= 1;
+    }
+    offset = logical & mask;
+
+    /* Find page in the inverted page table. */
+    frame = -1;
+    for ( i = 0; i < size_of_memory; i++ ) {
+        if (!page_table[i].free && page_table[i].page_num == page) {
+            frame = i;
+            break;
+        }
+    }
+
+    /* If frame is not -1, then we can successfully resolve the
+     * address and return the result. */
+    if (frame != -1) {
+        effective = (frame << size_of_frame) | offset;
+        
+	    //if frame was modified, set dirty bit
+	    if(memwrite == TRUE){
+		    page_table[frame].dirty = TRUE;
+	    }
+        //page was used so increment lfu count
+	    page_table[frame].lfu_count++;
+
+	    return effective;
+    }
+
+
+    /* If we reach this point, there was a page fault. Find
+     * a free frame. */
+    page_faults++;
+
+    for ( i = 0; i < size_of_memory; i++) {
+        if (page_table[i].free) {
+            frame = i;
+            break;
+        }
+    }
+
+    /* If we found a free frame, then patch up the
+     * page table entry and compute the effective
+     * address. Otherwise return -1.
+     */
+    if (frame != -1) {
+
+  	    page_table[frame].page_num = page;
+        //init values used in all algorithms
+	    page_table[frame].fifo_count = 0;
+            page_table[i].free = FALSE;
+	    page_table[frame].lfu_count = 1;
+	    page_table[frame].clock_bit = 0;
+
+	    //if frame was modified, set dirty bit
+        if(memwrite == TRUE){
+            page_table[frame].dirty = TRUE;
+        }
+
+        //inc swap ins!
+        swap_ins++;
+        effective = (frame << size_of_frame) | offset;
+        return effective;
+
+    } else {
+
+   	    int page_num = 0;
+
+	    //run fifo algorithm and get the swapped page index
+	    if(page_replacement_scheme == REPLACE_FIFO){
+	
+		    page_num = fifo_algorithm(FALSE, 0);
+	
+	    //run lfu algorithm and get the swapped page index
+	    }else if(page_replacement_scheme == REPLACE_LFU){
+		
+		    page_num = lfu_algorithm();
+	
+	    //run clock algorithm and get the swapped page index
+	    }else if (page_replacement_scheme == REPLACE_CLOCK){
+		
+		    //if clock front hand not set, point to the "first in" index (which will be at index 0 at first pass)
+		    if(clock_front_hand == -1){
+			    clock_front_hand = 0;
+		    }
+		    //if back clock hand not set, point to the "second in" index (which will be at index 1 at first pass)
+		    if(clock_back_hand == -1){
+			    clock_back_hand = 1;
+		    }
+		    page_num = clock_algorithm();
+	
+	    }else{
+		    return 0;
+	    }
+        
+	    //update values, increase swap out count, return effective
+	    page_table[page_num].page_num = page;
+            page_table[page_num].fifo_count = 0;
+            page_table[page_num].free = FALSE;
+     	    page_table[page_num].lfu_count = 1;
+	    page_table[page_num].clock_bit = 0;
+	    swap_ins++;
+
+	    if(page_table[page_num].dirty == TRUE){
+		    swap_outs++;
+	    }
+
+	    //if frame was modified, set dirty bit
+            if(memwrite == TRUE){
+            	    page_table[page_num].dirty = TRUE;
+            }else{
+		    page_table[page_num].dirty = FALSE;
+	    }
+
+            effective = (frame << size_of_frame) | offset;		
+	    return effective;
+    }
+}
+
+
+
+/*
+ * Super-simple progress bar.
+ */
+void display_progress(int percent)
+{
+    int to_date = PROGRESS_BAR_WIDTH * percent / 100;
+    static int last_to_date = 0;
+    int i;
+
+    if (last_to_date < to_date) {
+        last_to_date = to_date;
+    } else {
+        return;
+    }
+
+    printf("Progress [");
+    for (i=0; i<to_date; i++) {
+        printf(".");
+    }
+    for (; i<PROGRESS_BAR_WIDTH; i++) {
+        printf(" ");
+    }
+    printf("] %3d%%", percent);
+    printf("\r");
+    fflush(stdout);
+}
+
+
+int setup()
+{
+    int i;
+
+    page_table = (struct page_table_entry *)malloc(
+        sizeof(struct page_table_entry) * size_of_memory
+    );
+
+    if (page_table == NULL) {
+        fprintf(stderr,
+            "Simulator error: cannot allocate memory for page table.\n");
+        exit(1);
+    }
+
+    for (i=0; i<size_of_memory; i++) {
+        page_table[i].free = TRUE;
+	
+	    //adding init of other values
+	    page_table[i].lfu_count = 0;
+	    page_table[i].fifo_count = 0;
+	    page_table[i].dirty = FALSE;
+       	    page_table[i].clock_bit = 0;
+    }
+
+    return -1;
+}
+
+
+int teardown()
+{
+
+    return -1;
+}
+
+
+void error_resolve_address(long a, int l)
+{
+    fprintf(stderr, "\n");
+    fprintf(stderr, 
+        "Simulator error: cannot resolve address 0x%lx at line %d\n",
+        a, l
+    );
+    exit(1);
+}
+
+
+int output_report()
+{
+    printf("\n");
+    printf("Memory references: %d\n", mem_refs);
+    printf("Page faults: %d\n", page_faults);
+    printf("Swap ins: %d\n", swap_ins);
+    printf("Swap outs: %d\n", swap_outs);
+
+    return -1;
+}
+
+
+int main(int argc, char **argv)
+{
+    /* For working with command-line arguments. */
+    int i;
+    char *s;
+
+    /* For working with input file. */
+    FILE *infile = NULL;
+    char *infile_name = NULL;
+    struct stat infile_stat;
+    int  line_num = 0;
+    int infile_size = 0;
+
+    /* For processing each individual line in the input file. */
+    char buffer[MAX_LINE_LEN];
+    long addr;
+    char addr_type;
+    int  is_write;
+
+    /* For making visible the work being done by the simulator. */
+    int show_progress = FALSE;
+
+    /* Process the command-line parameters. Note that the
+     * REPLACE_OPTIMAL scheme is not required for A#4.
+     */
+    for (i=1; i < argc; i++) {
+        if (strncmp(argv[i], "--replace=", 9) == 0) {
+            s = strstr(argv[i], "=") + 1;
+            if (strcmp(s, "fifo") == 0) {
+                page_replacement_scheme = REPLACE_FIFO;
+            } else if (strcmp(s, "lfu") == 0) {
+                page_replacement_scheme = REPLACE_LFU;
+            } else if (strcmp(s, "clock") == 0) {
+                page_replacement_scheme = REPLACE_CLOCK;
+            } else if (strcmp(s, "optimal") == 0) {
+                page_replacement_scheme = REPLACE_OPTIMAL;
+            } else {
+                page_replacement_scheme = REPLACE_NONE;
+            }
+        } else if (strncmp(argv[i], "--file=", 7) == 0) {
+            infile_name = strstr(argv[i], "=") + 1;
+        } else if (strncmp(argv[i], "--framesize=", 12) == 0) {
+            s = strstr(argv[i], "=") + 1;
+            size_of_frame = atoi(s);
+        } else if (strncmp(argv[i], "--numframes=", 12) == 0) {
+            s = strstr(argv[i], "=") + 1;
+            size_of_memory = atoi(s);
+        } else if (strcmp(argv[i], "--progress") == 0) {
+            show_progress = TRUE;
+        }
+    }
+
+    if (infile_name == NULL) {
+        infile = stdin;
+    } else if (stat(infile_name, &infile_stat) == 0) {
+        infile_size = (int)(infile_stat.st_size);
+        /* If this fails, infile will be null */
+        infile = fopen(infile_name, "r");  
+    }
+
+
+    if (page_replacement_scheme == REPLACE_NONE ||
+        size_of_frame <= 0 ||
+        size_of_memory <= 0 ||
+        infile == NULL)
+    {
+        fprintf(stderr, 
+            "usage: %s --framesize=<m> --numframes=<n>", argv[0]);
+        fprintf(stderr, 
+            " --replace={fifo|lfu|clock|optimal} [--file=<filename>]\n");
+        exit(1);
+    }
+
+
+    setup();
+
+    while (fgets(buffer, MAX_LINE_LEN-1, infile)) {
+        line_num++;
+        if (strstr(buffer, ":")) {
+            sscanf(buffer, "%c: %lx", &addr_type, &addr);
+            if (addr_type == 'W') {
+                is_write = TRUE;
+            } else {
+                is_write = FALSE;
+            }
+
+            if (resolve_address(addr, is_write) == -1) {
+                error_resolve_address(addr, line_num);
+            }
+            mem_refs++;
+        } 
+
+        if (show_progress) {
+            display_progress(ftell(infile) * 100 / infile_size);
+        }
+    }
+    
+
+    teardown();
+    output_report();
+
+    fclose(infile);
+
+    exit(0);
+}
