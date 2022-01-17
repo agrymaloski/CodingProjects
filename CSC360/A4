@@ -1,0 +1,677 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <string.h>
+#include <stdbool.h>
+
+/*
+ * A queue structure provided to you by the teaching team. This header
+ * file contains the function prototypes; the queue routines are
+ * linked in from a separate .o file (which is done for you via
+ * the `makefile`).
+ */
+#include "queue.h"
+
+
+/* 
+ * Some constants related to assignment description.
+ */
+#define MAX_INPUT_LINE 100
+#define MAX_TASKS 10
+const int QUEUE_TIME_QUANTUMS[] = { 2, 4, 8 };
+
+
+/*
+ * Here are variables that are available to methods. Given these are 
+ * global, you need not pass them as parameters to functions. 
+ * However, you must be careful while initializing/setting these
+ * global variables.
+ */
+Queue_t *queue_1;
+Queue_t *queue_2;
+Queue_t *queue_3;
+Task_t task_table[MAX_TASKS];
+Task_t *current_task = NULL;
+int remaining_quantum = 0;		// Remaining Time Quantum for the current task
+int remaining_tasks = MAX_TASKS; 
+
+/*
+ * Function: validate_args
+ * -----------------------
+ *  Validate the input command line args.
+ *
+ *  argc: Number of command line arguments provided
+ *  argv: Command line arguments
+ */
+void validate_args(int argc, char *argv[]) {
+	if(argc != 2) {
+		fprintf(stderr, "Invalid number of input args provided! Expected 1, received %d\n", argc - 1);
+		exit(1);
+	}
+}
+
+
+/*
+ * Function: initialize_vars
+ * -------------------------
+ *  Initialize the three queues.
+ */
+void initialize_vars() {
+	queue_1 = init_queue();
+	queue_2 = init_queue();
+	queue_3 = init_queue();
+}
+
+/*
+ * Function: read_instruction
+ * --------------------------
+ *  Reads a single line from the input file and stores the 
+ *  appropriate values in the instruction pointer provided. In case
+ *  fp: File pointer to the input test file
+ *  instruction: Pointer to store the read instruction details
+ */
+void read_instruction(FILE *fp, Instruction_t *instruction) {
+	char line[MAX_INPUT_LINE];
+	
+	if(fgets(line, sizeof(line), fp) == NULL) {
+		instruction->event_tick = -1;
+		instruction->is_eof = true;
+		return;
+	}
+
+	int vars_read = sscanf(line, "%d,%d,%d", &instruction->event_tick, 
+	&instruction->task_id, &instruction->burst_time);
+	instruction->is_eof = false;
+
+	if(vars_read == EOF || vars_read != 3) {
+		fprintf(stderr, "Error reading from the file.\n");
+		exit(1);
+	}
+
+	if(instruction->event_tick < 0 || instruction->task_id < 0) {
+		fprintf(stderr, "Incorrect file input.\n");
+		exit(1);
+	}
+}
+
+
+
+
+/*
+ * Function: get_queue_by_id
+ * -------------------------
+ *  Returns the Queue associated with the given `queue_id`.
+ *
+ *  queue_id: Integer Queue identifier.
+ */
+Queue_t *get_queue_by_id(int queue_id) {
+	switch (queue_id) {
+		case 1:
+			return queue_1;
+
+		case 2:
+			return queue_2;
+
+		case 3:
+			return queue_3;
+	}
+	return NULL;
+}
+
+//this function accepts a task's current queue and a reference to the task and removes it from the current queue
+void remove_task(int curr_queue, Task_t *completed_task){
+        Task_t* task;
+        if(curr_queue == 1){
+		
+		//if empty queue nothing to return
+		if(is_empty(queue_1)){
+			return;
+		}
+		
+		//else dequeue task
+                task = dequeue(queue_1);
+                while(task->id != completed_task->id){
+                        enqueue(queue_1,task);
+                        task = dequeue(queue_1);
+                }
+
+        }else if (curr_queue == 2){
+
+		//if empty queue nothing to return
+                if(is_empty(queue_2)){
+                        return;
+                } 
+	
+		//else dequeue task
+		task = dequeue(queue_2);
+                while(task->id != completed_task->id){
+                        enqueue(queue_2,task);
+                        task = dequeue(queue_2);
+                }
+
+        }else{
+		//if empty queue return
+		if(is_empty(queue_3)){
+                        return;
+                } 
+		
+		//else dequeue task
+                task = dequeue(queue_3);
+                while(task->id != completed_task->id){
+                        enqueue(queue_3,task);
+                        task = dequeue(queue_3);
+                }
+
+        }
+        return;
+}
+
+
+/*
+ * Function: handle_instruction
+ * ----------------------------
+ *  Processes the input instruction, depending on the instruction
+ *  type:
+ *      a. New Task (burst_time == 0)
+ *      b. Task Completion (burst_time == -1)
+ *      c. Task Burst (burst_time == <int>)
+ *
+ *  NOTE: 
+ *	a. This method performs NO task scheduling, NO Preemption and NO
+ *  	Updation of Task priorities/levels. These tasks would be   
+ *		handled by the `scheduler`.
+ *	b. A task once demoted to a level, retains that level for all 
+ *		future bursts unless it is further demoted.
+ *
+ *  instruction: Input instruction
+ *  tick: Clock tick (ONLY For Print statements)
+ */
+void handle_instruction(Instruction_t *instruction, int tick) {
+	int task_id = instruction->task_id;
+
+	
+	if(instruction->burst_time == 0) { 
+		// New Task Arrival
+		// TODO ... Insert your Code Here
+	
+	        //init values in task table	
+		task_table[task_id].id = task_id;
+		task_table[task_id].burst_time = -1;		
+		task_table[task_id].total_wait_time = 0;
+		task_table[task_id].total_execution_time = 0;
+
+		printf("[%05d] id=%04d NEW\n", tick, task_id);
+	
+	} else if(instruction->burst_time == -1) { 
+		// Task Termination
+		int waiting_time;
+		int turn_around_time;
+		
+		// TODO ... Insert your Code Here
+		waiting_time = task_table[task_id].total_wait_time;	
+		turn_around_time = waiting_time + task_table[task_id].total_execution_time;
+					
+		remove_task(task_table[task_id].current_queue, &task_table[task_id]);
+		printf("[%05d] id=%04d EXIT wt=%d tat=%d\n", tick, task_id, 
+			waiting_time, turn_around_time);
+
+
+	} else {
+		// CPU Burst for the task
+		// TODO ... Insert your Code Here
+
+		
+		task_table[task_id].id = task_id;
+               
+		//if new task
+		if(task_table[task_id].burst_time == -1){
+			
+			task_table[task_id].remaining_burst_time = instruction->burst_time;
+			task_table[task_id].current_queue = 1;
+			task_table[task_id].burst_time = instruction->burst_time;
+			
+			//if no current task make this task the new task
+			if(current_task == NULL){
+			        current_task = &task_table[task_id];
+                        	remaining_quantum = 2;
+
+			//if current task already exists put in task table	
+                	}else{
+                        	enqueue(queue_1,&task_table[task_id]);
+                	}
+		}else{
+			//adding to burst time and remaining time
+			task_table[task_id].remaining_burst_time = instruction->burst_time;
+			task_table[task_id].burst_time = instruction->burst_time;
+			
+
+		}
+	}
+}
+
+
+/*
+ * Function: peek_priority_task
+ * ----------------------------
+ *  Returns a reference to the Task with the highest priority.
+ *  Does NOT dequeue the task.
+ */
+Task_t *peek_priority_task() {
+	// TODO ... Insert your Code Here
+	Task_t *task = NULL;
+	
+	//check if current task has used quantum, if yes task should continue
+	if(remaining_quantum > 0 && current_task != NULL){
+		
+		if(current_task->current_queue == 1){
+			return current_task;
+		}
+	}
+
+	//if queue 1 is not empty, task at front of queue 1 has priority
+	if(!is_empty(queue_1)){
+
+		task = queue_1->start;	
+		while(task != NULL){		
+			
+			if(task->remaining_burst_time > 0){
+			
+				return task;
+			}
+			task = task->next;
+		}
+
+	}
+	//check if quantum is > 0 if yes check if current task queue is 2 if yes it has priority	
+	if(remaining_quantum > 0 && current_task != NULL){
+                
+                if(current_task->current_queue == 2){
+
+                        return current_task;
+                }
+        }
+	
+	//if queue 2 is not empty, task at front of queue 2 has priority
+	if(!is_empty(queue_2)){
+         	task = queue_2->start;
+                
+		while(task!= NULL){
+			
+                        if(task->remaining_burst_time > 0){
+                                
+				return task;
+                        }
+			task = task->next;
+                }
+        }
+	//if the current task has left over quantum and it is in queue 3 it has priority
+	if(remaining_quantum > 0 && current_task != NULL){
+
+                if(current_task->current_queue == 3){
+                        return current_task;
+                }
+        }
+
+        //if queue 3 is not empty, task at front of queue 3 has priority
+	if(!is_empty(queue_3)){
+        	        
+		task = queue_3->start;
+                while(task!= NULL){
+			
+                        if(task->remaining_burst_time > 0){
+                                return task;
+                        }
+			task = task->next;
+                }
+        }	
+	//no waiting tasks found return null
+	return NULL;
+}
+
+
+
+/*
+ * Function: decrease_task_level
+ * -----------------------------
+ *  Updates the task to lower its level(Queue) by 1.
+ */
+void decrease_task_level(Task_t *task) {
+	task->current_queue = task->current_queue == 3 ? 3 : task->current_queue + 1;
+}
+
+
+
+/*
+ * Function: scheduler
+ * -------------------
+ *  Schedules the task having the highest priority to be the current 
+ *  task. Also, for the currently executing task, decreases the task    
+ *	level on completion of the current time quantum.
+ *
+ *  NOTE:
+ *  a. The task to be currently executed is `dequeued` from one of the
+ *  	queues.
+ *  b. On Pre-emption of a task by another task, the preempted task 
+ *  	is `enqueued` to the end of its associated queue.
+ */
+void scheduler() {
+	Task_t *priority_task = peek_priority_task();
+
+	// TODO ... Insert your Code Here	
+
+	//no tasks waiting, no tasks scheduled; do nothing
+	if(priority_task == NULL && current_task == NULL){
+		return;		
+	}
+
+	//quantum not used, burst time not used; continue w no change
+	if(remaining_quantum > 0 && current_task!=NULL){
+
+		if(current_task ->id == priority_task->id){
+			return;
+		}
+	}
+
+	//remaining burst time is 0 and task waiting
+	if(current_task == NULL && priority_task != NULL){
+		
+		//make the priority task the current task
+                int curr_queue = priority_task->current_queue;
+
+
+                //dequeue current task
+                if(curr_queue == 1){
+                        current_task = dequeue(queue_1);
+                        remaining_quantum = 2;
+                }else if(curr_queue == 2){
+                        remaining_quantum = 4;
+                        current_task = dequeue(queue_2);
+                }else{
+                        remaining_quantum = 8;
+                        current_task = dequeue(queue_3);
+                }
+
+		return;
+
+	}
+	//flag to keep track of left over quantum!
+	int flag = 0;
+        if(remaining_quantum >0){
+                flag = 1;
+        }
+
+
+	
+	//quantum used but no task waiting; continue task with new quantum
+	if(current_task != NULL){
+		
+		int curr_queue = current_task->current_queue;
+		int id = current_task->id;
+		
+		//if no task waiting, current task has priority, increase queue # and quantum
+		if(priority_task == NULL){
+			if(curr_queue == 1){
+
+                		current_task->current_queue = 2;
+                        	remaining_quantum = 4;
+
+                	}else{
+                        	current_task->current_queue = 3;
+                        	remaining_quantum = 8;
+                	}
+
+                	task_table[id] = *current_task;
+		
+		
+	
+
+		//task is waiting
+		}else{
+			
+			task_table[id] = *current_task;
+			curr_queue = task_table[id].current_queue;
+                      
+
+			//if current task has queue less that priority task, it has priority
+                        if(task_table[id].current_queue < priority_task->current_queue){
+
+				//if quantum is == 0 decrease queue level
+                                if(flag == 0){
+                                        decrease_task_level(&task_table[id]);
+                                }
+				//reset the quantum
+				curr_queue = task_table[id].current_queue;
+				if(curr_queue == 1){
+					remaining_quantum = 2;
+				}else if (curr_queue == 2){
+					remaining_quantum = 4;
+				}else {
+					remaining_quantum = 8;
+				}
+                                current_task = &task_table[id];
+                                return;
+                        }
+
+			curr_queue = priority_task->current_queue;
+			
+                        //dequeue priority task and make current task
+                        if(curr_queue ==1){
+				
+				 current_task = dequeue(queue_1);
+				 //loop to get priority task
+				 while(current_task ->id != priority_task->id){
+					 
+					 enqueue(queue_1, current_task);
+					 current_task = dequeue(queue_1);
+                   
+                		}
+				remaining_quantum = 2;
+
+                        }else if(curr_queue ==2){
+ 
+				current_task = dequeue(queue_2);
+				//loop to get priority task
+                        	while(current_task -> id != priority_task->id){
+                                          
+                                         enqueue(queue_2, current_task);
+                                         current_task = dequeue(queue_2);
+                                        
+                                }
+				remaining_quantum = 4;
+
+                        }else{
+                                current_task = dequeue(queue_3);
+				//loop to get priority task
+                                while(current_task -> id != priority_task->id){
+					
+                                        enqueue(queue_3, current_task);
+                                        current_task = dequeue(queue_3);
+					
+                                }
+				remaining_quantum = 8;
+                        }
+
+			curr_queue = task_table[id].current_queue;
+			
+			
+			//if quantum == 0		
+			if(flag == 0){
+				//decrease task level and move to new correct queue
+				decrease_task_level(&task_table[id]);
+				if(curr_queue == 1){
+                        		enqueue(queue_2, &task_table[id]);
+                	
+				}else if(curr_queue == 2){
+                      			
+                        		enqueue(queue_3, &task_table[id]);
+
+                		}else{
+        	                	
+                        		enqueue(queue_3, &task_table[id]);
+                		}
+				
+			}else{
+				//else dont decrease task level, put back in same queue
+				if(curr_queue == 1){
+                                	enqueue(queue_1, &task_table[id]);
+
+                                }else if(curr_queue == 2){
+                        		                       
+                                        enqueue(queue_2, &task_table[id]);
+
+                                }else{ 
+                                        enqueue(queue_3, &task_table[id]);
+                                }
+			}			
+		}
+	}
+}
+
+
+
+/*
+ * Function: execute_task
+ * ----------------------
+ *  Executes the current task (By updating the associated remaining
+ *  times). Sets the current_task to NULL on completion of the
+ *	current burst.
+ *
+ *  tick: Clock tick (ONLY For Print statements)
+ */
+void execute_task(int tick) {
+	if(current_task != NULL) {
+		// TODO ... Insert your Code Here
+	
+		//decrement remaining burst time and update leftover quantum
+		current_task->remaining_burst_time--;
+		remaining_quantum--;
+
+		
+
+		printf("[%05d] id=%04d req=%d used=%d queue=%d\n", tick, 
+			current_task->id, current_task->burst_time, 
+			(current_task->burst_time - current_task->remaining_burst_time), 
+			current_task->current_queue);
+		
+		if(current_task->remaining_burst_time == 0) {
+			
+			int id = current_task->id;
+			int curr_queue = current_task->current_queue;
+			//save task in table
+			task_table[id] = *current_task;
+						
+			//enqueue tasks
+			if(curr_queue == 1){
+                                enqueue(queue_1, &task_table[id]);
+
+                        }else if(curr_queue == 2){
+                                enqueue(queue_2, &task_table[id]);
+
+                        }else{
+                                enqueue(queue_3, &task_table[id]);
+
+                        }
+			current_task = NULL;
+		}
+
+	} else {
+		printf("[%05d] IDLE\n", tick);
+	}
+}
+
+
+
+/*
+ * Function: update_task_metrics
+ * -----------------------------
+ * 	Increments the waiting time/execution time for the tasks 
+ * 	that are currently scheduled (In the queue). These values would  
+ * 	be later used for the computation of the task waiting time and  
+ *	turnaround time.
+ */
+void update_task_metrics() {
+	// TODO ... Insert your Code Here
+
+	for(int i = 0; i < MAX_TASKS; i++){
+	
+		if(&task_table[i] != NULL){
+			
+			
+			if((current_task == NULL || task_table[i].id != current_task->id) && task_table[i].remaining_burst_time > 0){
+				task_table[i].total_wait_time++;
+			}
+
+			if(current_task != NULL && task_table[i].id == current_task->id ){
+				task_table[i].total_execution_time++;
+			}
+		}
+	
+	}
+	
+}
+
+
+
+/*
+ * Function: main
+ * --------------
+ * argv[1]: Input file/test case.
+ */
+int main(int argc, char *argv[]) {
+	int tick = 1;
+	int is_inst_complete = false;
+	
+	validate_args(argc, argv);
+	initialize_vars();
+
+	FILE *fp = fopen(argv[1], "r");
+
+	if(fp == NULL) {
+		fprintf(stderr, "File \"%s\" does not exist.\n", argv[1]);
+		exit(1);
+	}
+
+	Instruction_t *curr_instruction = (Instruction_t*) malloc(sizeof(Instruction_t));
+	
+	// Read First Instruction
+	read_instruction(fp, curr_instruction);
+
+	if(curr_instruction->is_eof) {
+		fprintf(stderr, "Error reading from the file. The file is empty.\n");
+		exit(1);
+	}
+
+
+	while(true) {
+		while(curr_instruction->event_tick == tick) {
+			handle_instruction(curr_instruction, tick);
+
+			// Read Next Instruction
+			read_instruction(fp, curr_instruction);
+			if(curr_instruction->is_eof) {
+				is_inst_complete = true;
+			}
+		}
+		
+		scheduler();
+		
+		update_task_metrics();
+
+		execute_task(tick);
+
+		
+		if(is_inst_complete && is_empty(queue_1) && is_empty(queue_2) && is_empty(queue_3) && current_task == NULL) {
+			break;
+		}
+
+		tick++;
+	}
+
+	fclose(fp);
+	deallocate(curr_instruction);
+	deallocate(queue_1);
+	deallocate(queue_2);
+	deallocate(queue_3);
+}
